@@ -1,0 +1,20 @@
+# Terraform caches & state
+**/.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+
+# Sensitive variables (adjust if you really need to commit sample tfvars)
+*.tfvars
+terraform.tfvars
+
+# Editors / OS
+.DS_Store
+Thumbs.db
+
+# Secrets (keep these OUT of git)
+*.pem
+*.key
+*.pfx
+*.cert
+keys and vars/
