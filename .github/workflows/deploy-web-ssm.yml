@@ -31,7 +31,7 @@ jobs:
             echo "No running instances with Name=cs1nca-dev-web"; exit 1
           fi
           echo "IDS=$IDS" >> $GITHUB_OUTPUT
-
+      
       - name: Build SSM parameters (JSON)
         id: build_params
         run: |
@@ -39,20 +39,12 @@ jobs:
           cat > params.json <<'EOF'
           {
             "commands": [
-              "set -euxo pipefail",
-              # install nginx if missing (harmless if already present)
-              "sudo yum install -y nginx || true",
-              # make sure the web root exists
-              "sudo mkdir -p /usr/share/nginx/html",
-              # write the page (use tee so we don't fight shell redirection perms)
-              "echo \"<h1>Deployed ${GITHUB_SHA} on ${DATE}</h1>\" | sudo tee /usr/share/nginx/html/index.html >/dev/null",
-              # ensure service is enabled and running
-              "sudo systemctl enable nginx || true",
-              "sudo systemctl restart nginx || sudo systemctl start nginx || true"
+              "set -euo pipefail",
+              "sudo mkdir -p /usr/share/nginx/html || true",
+              "echo \"Deployed ${GITHUB_SHA} at ${DATE}\" | sudo tee /tmp/deploy.txt >/dev/null"
             ]
           }
           EOF
-          # expand the two variables after writing the template
           sed -i "s/\${GITHUB_SHA}/${GITHUB_SHA}/g" params.json
           sed -i "s/\${DATE}/$DATE/g" params.json
           echo "Params:"; cat params.json
