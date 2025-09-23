@@ -7,7 +7,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       AWS_REGION: eu-central-1
-      AWS_PAGER: ""           # no pagers in CI logs
+      AWS_PAGER: ""
     steps:
       - uses: actions/checkout@v4
 
@@ -31,9 +31,8 @@ jobs:
             echo "No running instances with Name=cs1nca-dev-web"; exit 1
           fi
           echo "IDS=$IDS" >> $GITHUB_OUTPUT
-      
+
       - name: Build SSM parameters (JSON)
-        id: build_params
         run: |
           DATE="$(date -u)"
           cat > params.json <<'EOF'
@@ -41,7 +40,8 @@ jobs:
             "commands": [
               "set -euo pipefail",
               "sudo mkdir -p /usr/share/nginx/html || true",
-              "echo \"Deployed ${GITHUB_SHA} at ${DATE}\" | sudo tee /tmp/deploy.txt >/dev/null"
+              "echo \"Deployed ${GITHUB_SHA} at ${DATE}\" | sudo tee /tmp/deploy.txt >/dev/null",
+              "if [ -d /usr/share/nginx/html ]; then sudo cp /tmp/deploy.txt /usr/share/nginx/html/index.html && sudo systemctl restart nginx || true; fi"
             ]
           }
           EOF
@@ -49,8 +49,7 @@ jobs:
           sed -i "s/\${DATE}/$DATE/g" params.json
           echo "Params:"; cat params.json
 
-
-      - name: Send SSM command (update index.html)
+      - name: Send SSM command
         id: send
         run: |
           CMD_ID=$(aws ssm send-command \
@@ -59,10 +58,10 @@ jobs:
             --parameters file://params.json \
             --comment "Deploy simple page via GitHub Actions" \
             --query "Command.CommandId" --output text)
-          echo "CommandId: $CMD_ID"
           echo "CMD_ID=$CMD_ID" >> $GITHUB_OUTPUT
+          echo "CommandId: $CMD_ID"
 
-      - name: Wait for SSM completion (per instance)
+      - name: Wait for SSM completion
         run: |
           set -e
           for ID in ${{ steps.ids.outputs.IDS }}; do
@@ -80,6 +79,7 @@ jobs:
               sleep 5
             done
           done
+
       - name: Dump SSM output on failure
         if: failure()
         run: |
@@ -92,3 +92,10 @@ jobs:
               --query '{Status:Status,Code:ResponseCode,StdErr:StandardErrorContent,StdOut:StandardOutputContent}' \
               --output json || true
           done
+
+      - name: Print instance public IPs
+        run: |
+          aws ec2 describe-instances \
+            --instance-ids ${{ steps.ids.outputs.IDS }} \
+            --query "Reservations[].Instances[].PublicIpAddress" \
+            --output text
