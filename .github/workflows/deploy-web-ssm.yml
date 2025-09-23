@@ -36,16 +36,27 @@ jobs:
         id: build_params
         run: |
           DATE="$(date -u)"
-          cat > params.json <<EOF
+          cat > params.json <<'EOF'
           {
             "commands": [
-              "sudo bash -lc 'echo \"<h1>Deployed $GITHUB_SHA on $DATE</h1>\" > /usr/share/nginx/html/index.html'",
-              "sudo systemctl restart nginx"
+              "set -euxo pipefail",
+              # install nginx if missing (harmless if already present)
+              "sudo yum install -y nginx || true",
+              # make sure the web root exists
+              "sudo mkdir -p /usr/share/nginx/html",
+              # write the page (use tee so we don't fight shell redirection perms)
+              "echo \"<h1>Deployed ${GITHUB_SHA} on ${DATE}</h1>\" | sudo tee /usr/share/nginx/html/index.html >/dev/null",
+              # ensure service is enabled and running
+              "sudo systemctl enable nginx || true",
+              "sudo systemctl restart nginx || sudo systemctl start nginx || true"
             ]
           }
           EOF
-          echo "Params:"
-          cat params.json
+          # expand the two variables after writing the template
+          sed -i "s/\${GITHUB_SHA}/${GITHUB_SHA}/g" params.json
+          sed -i "s/\${DATE}/$DATE/g" params.json
+          echo "Params:"; cat params.json
+
 
       - name: Send SSM command (update index.html)
         id: send
