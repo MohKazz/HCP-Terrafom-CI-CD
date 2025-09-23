@@ -272,6 +272,7 @@ resource "aws_autoscaling_group" "web" {
     value               = "${var.name}-web"
     propagate_at_launch = true
   } 
+  
 }
 
 # RDS SG: allow PostgreSQL only from web SG
