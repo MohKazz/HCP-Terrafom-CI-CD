@@ -5,18 +5,59 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    env: { AWS_REGION: eu-central-1 }
+    env:
+      AWS_REGION: eu-central-1
+      AWS_PAGER: ""           # no pagers in CI logs
     steps:
       - uses: actions/checkout@v4
-      - uses: aws-actions/configure-aws-credentials@v4
+
+      - name: Configure AWS creds (temp tokens supported)
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token:     ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region:            ${{ env.AWS_REGION }}
-      - name: Push simple page to all web instances
+
+      - name: Resolve running instance IDs by tag
+        id: ids
         run: |
-          aws ssm send-command \
+          set -e
+          IDS=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=cs1nca-dev-web" "Name=instance-state-name,Values=running" \
+            --query "Reservations[].Instances[].InstanceId" --output text)
+          echo "Found: $IDS"
+          if [ -z "$IDS" ]; then
+            echo "No running instances with Name=cs1nca-dev-web"; exit 1
+          fi
+          echo "IDS=$IDS" >> $GITHUB_OUTPUT
+
+      - name: Send SSM command (update index.html)
+        id: send
+        run: |
+          CMD_ID=$(aws ssm send-command \
             --document-name "AWS-RunShellScript" \
-            --targets "Key=tag:Name,Values=cs1nca-dev-web" \
-            --parameters commands="sudo bash -lc 'echo \"<h1>Deployed $GITHUB_SHA on $(date -u)</h1>\" > /usr/share/nginx/html/index.html'"
+            --instance-ids ${{ steps.ids.outputs.IDS }} \
+            --comment "Deploy simple page via GitHub Actions" \
+            --parameters commands="sudo bash -lc 'echo \"<h1>Deployed $GITHUB_SHA on $(date -u)</h1>\" > /usr/share/nginx/html/index.html; systemctl restart nginx'" \
+            --query "Command.CommandId" --output text)
+          echo "CommandId: $CMD_ID"
+          echo "CMD_ID=$CMD_ID" >> $GITHUB_OUTPUT
+
+      - name: Wait for SSM completion (per instance)
+        run: |
+          set -e
+          for ID in ${{ steps.ids.outputs.IDS }}; do
+            echo "Waiting on $ID ..."
+            # poll until success/failure
+            for i in $(seq 1 30); do
+              OUT=$(aws ssm get-command-invocation --command-id "${{ steps.send.outputs.CMD_ID }}" --instance-id "$ID" || true)
+              STATUS=$(echo "$OUT" | jq -r '.Status // empty')
+              echo "$ID status: $STATUS"
+              if [ "$STATUS" = "Success" ]; then break; fi
+              if [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ] || [ "$STATUS" = "TimedOut" ]; then
+                echo "$OUT"; exit 1
+              fi
+              sleep 5
+            done
+          done
